@@ -1,0 +1,238 @@
+name: 🚀 Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/capstone1.1
+
+jobs:
+
+# -----------------------------
+# 🧪 PARALLEL TEST STAGE
+# -----------------------------
+  test-backend:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_attendance
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run unit tests
+        run: |
+          cd backend
+          npm run test:unit
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_attendance
+          NODE_ENV: test
+
+      - name: Run integration tests
+        run: |
+          cd backend
+          npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_attendance
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd frontend
+          npm run test:ci
+
+  test-face-service:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd face-service
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          cd face-service
+          python -m pytest tests/ -v --cov=app --cov-report=xml
+
+# -----------------------------
+# 🏗️ BUILD & PUSH STAGE
+# -----------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    needs: [test-backend, test-frontend, test-face-service]
+    
+    strategy:
+      matrix:
+        service: [backend, frontend, face-service]
+        include:
+          - service: backend
+            context: ./backend
+          - service: frontend
+            context: ./frontend
+          - service: face-service
+            context: ./face-service
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Wait for rate limit reset
+        run: |
+          echo "Waiting 30 seconds to avoid Docker Hub rate limiting..."
+          sleep 30
+
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}-${{ matrix.service }}:latest
+            ${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          pull: true
+          no-cache: false
+
+# -----------------------------
+# 🚀 BLUE/GREEN DEPLOYMENT
+# -----------------------------
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check server availability
+        id: check_server
+        continue-on-error: true
+        run: |
+          if timeout 5 bash -c "</dev/tcp/${{ secrets.EC2_HOST }}/22"; then
+            echo "alive=true" >> $GITHUB_OUTPUT
+          else
+            echo "alive=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to EC2
+        if: steps.check_server.outputs.alive == 'true'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            set -e || true
+            cd ~/capstone1.1 || exit 0
+
+            git pull origin main || true
+
+            echo "🚀 Starting Blue/Green deployment"
+            chmod +x deploy.sh
+            ./deploy.sh
+
+      - name: Skip deploy (VM OFF)
+        if: steps.check_server.outputs.alive == 'false'
+        run: echo "⚠️ VM is OFF. Deployment skipped, pipeline continues."
+
+# -----------------------------
+# 🧹 CLEANUP
+# -----------------------------
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    continue-on-error: true
+
+    steps:
+      - name: Cleanup old Docker images
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            cd ~/capstone1.1 || exit 0
+            
+            docker images --format "table {{.Repository}}:{{.Tag}}" | grep "capstone1.1" | tail -n +6 | awk '{print $1":"$2}' | xargs -r docker rmi || true
+            
+            echo "🧹 Cleanup completed"
