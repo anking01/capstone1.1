@@ -218,7 +218,7 @@ services:
       - "8081:80"
     volumes:
       - moodle_data:/var/www/moodledata
-      - ./moodle-data/plugins/attendance:/var/www/html/mod/attendance:ro
+    #  - ./moodle-data/plugins/attendance:/var/www/html/mod/attendance:ro
       - ./moodle-app/php-timezone.ini:/usr/local/etc/php/conf.d/timezone.ini:ro
       - ./moodle-data/config.php:/var/www/html/config.php:ro
     environment:
