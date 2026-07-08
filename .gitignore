@@ -186,3 +186,7 @@ health-check.log
 
 # Moodle runtime data
 moodle-data/
+
+# Backup files
+*.bak
+*.save
