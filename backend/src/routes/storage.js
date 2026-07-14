@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const azureStorageService = require('../services/azure_storage');
+const awsStorageService = require('../services/aws_storage');
 const { requireAuth, requireTeacher } = require('../middleware/auth');
 
 // Configure multer for memory storage
@@ -19,11 +19,11 @@ const upload = multer({
   }
 });
 
-// Initialize Azure Storage container
+// Initialize storage (S3 bucket or local fallback)
 router.post('/initialize', requireTeacher, async (req, res) => {
   try {
-    await azureStorageService.initializeContainer();
-    res.json({ success: true, message: 'Azure Storage container initialized' });
+    await awsStorageService.initializeContainer();
+    res.json({ success: true, message: 'Storage initialized' });
   } catch (error) {
     console.error('Storage initialization error:', error);
     res.status(500).json({ error: error.message });
@@ -39,7 +39,7 @@ router.post('/upload-face/:studentId', requireTeacher, upload.single('image'), a
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    const result = await azureStorageService.uploadFaceImage(
+    const result = await awsStorageService.uploadFaceImage(
       studentId,
       req.file.buffer,
       req.file.originalname
@@ -61,7 +61,7 @@ router.get('/face/:studentId/:fileName', requireAuth, async (req, res) => {
   try {
     const { studentId, fileName } = req.params;
     
-    const imageData = await azureStorageService.getFaceImage(studentId, fileName);
+    const imageData = await awsStorageService.getFaceImage(studentId, fileName);
     
     res.set('Content-Type', imageData.contentType);
     res.send(imageData.buffer);
@@ -76,7 +76,7 @@ router.get('/faces/:studentId', requireAuth, async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    const images = await azureStorageService.listFaceImages(studentId);
+    const images = await awsStorageService.listFaceImages(studentId);
     
     res.json({ 
       success: true, 
@@ -94,7 +94,7 @@ router.delete('/face/:studentId/:fileName', requireTeacher, async (req, res) => 
   try {
     const { studentId, fileName } = req.params;
     
-    await azureStorageService.deleteFaceImage(studentId, fileName);
+    await awsStorageService.deleteFaceImage(studentId, fileName);
     
     res.json({ 
       success: true, 
@@ -111,7 +111,7 @@ router.delete('/faces/:studentId', requireTeacher, async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    await azureStorageService.deleteAllFaceImages(studentId);
+    await awsStorageService.deleteAllFaceImages(studentId);
     
     res.json({ 
       success: true, 
@@ -133,7 +133,7 @@ router.post('/encoding/:studentId', requireTeacher, async (req, res) => {
       return res.status(400).json({ error: 'No encoding data provided' });
     }
 
-    const result = await azureStorageService.uploadFaceEncoding(studentId, encodingData);
+    const result = await awsStorageService.uploadFaceEncoding(studentId, encodingData);
     
     res.json({ 
       success: true, 
@@ -151,7 +151,7 @@ router.get('/encoding/:studentId', requireAuth, async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    const encoding = await azureStorageService.getFaceEncoding(studentId);
+    const encoding = await awsStorageService.getFaceEncoding(studentId);
     
     if (!encoding) {
       return res.status(404).json({ error: 'Face encoding not found' });
@@ -172,7 +172,7 @@ router.delete('/encoding/:studentId', requireTeacher, async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    await azureStorageService.deleteFaceEncoding(studentId);
+    await awsStorageService.deleteFaceEncoding(studentId);
     
     res.json({ 
       success: true, 
@@ -187,7 +187,7 @@ router.delete('/encoding/:studentId', requireTeacher, async (req, res) => {
 // Get storage statistics
 router.get('/stats', requireTeacher, async (req, res) => {
   try {
-    const stats = await azureStorageService.getStorageStats();
+    const stats = await awsStorageService.getStorageStats();
     
     res.json({ 
       success: true, 
@@ -209,7 +209,7 @@ router.post('/batch-upload/:studentId', requireTeacher, upload.array('images', 5
     }
 
     const uploadPromises = req.files.map(file => 
-      azureStorageService.uploadFaceImage(studentId, file.buffer, file.originalname)
+      awsStorageService.uploadFaceImage(studentId, file.buffer, file.originalname)
     );
 
     const results = await Promise.all(uploadPromises);

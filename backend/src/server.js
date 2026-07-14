@@ -10,14 +10,14 @@ const fs = require('fs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const metrics = require('./metrics');
-const azureStorageService = require('./services/azure_storage');
+const awsStorageService = require('./services/aws_storage');
 const db = require('./db');
 
 // Trust proxy for nginx reverse proxy
 const app = express();
 app.set('trust proxy', 1);
 
-// const { startAutoAbsentJob } = require('./autoAbsentJob');
+const { startAutoAbsentJob } = require('./autoAbsentJob');
 const lmsSyncService = require('./services/lms_sync');
 
 // Initialize database schema on startup
@@ -33,7 +33,10 @@ const initializeDatabase = async () => {
       console.log('✅ Database already initialized');
     } else {
       console.log('📝 Initializing database schema...');
-      const initSQL = fs.readFileSync(path.join(__dirname, '../sql/init.sql'), 'utf8');
+      const initSQL = fs.readFileSync(path.join(__dirname, '../sql/init.sql'), 'utf8')
+        .split('\n')
+        .filter(line => !line.trim().startsWith('--'))
+        .join('\n');
       
       // Execute each statement separately to handle multiple commands
       const statements = initSQL
@@ -107,22 +110,17 @@ const initializeDatabase = async () => {
   }
 };
 
-// Initialize Azure Storage (only if connection string is provided)
-if (process.env.AZURE_STORAGE_CONNECTION_STRING) {
-  azureStorageService.initializeContainer().catch(err => {
-    console.error('Azure Storage initialization failed:', err.message);
-  });
-} else {
-  console.log('⚠️ Azure Storage connection string not provided - skipping Azure initialization');
-}
+// Initialize storage (S3 when AWS credentials are set, local disk otherwise)
+awsStorageService.initializeContainer().catch(err => {
+  console.error('Storage initialization failed:', err.message);
+});
 
 // Start background jobs (with error handling)
-// Temporarily disabled to prevent crashes
-// try {
-//   startAutoAbsentJob();
-// } catch (err) {
-//   console.error('Auto absent job failed to start:', err.message);
-// }
+try {
+  startAutoAbsentJob();
+} catch (err) {
+  console.error('Auto absent job failed to start:', err.message);
+}
 
 try {
   lmsSyncService.startScheduledSync();

@@ -45,6 +45,19 @@ except Exception:
 os.makedirs("encodings", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
+# Save incoming frames to disk only when explicitly enabled
+DEBUG_SAVE_FRAMES = os.getenv("DEBUG_SAVE_FRAMES", "false").strip().lower() == "true"
+
+def save_debug_frame(image):
+    if not DEBUG_SAVE_FRAMES:
+        return
+    try:
+        import cv2
+        os.makedirs("/app/uploads", exist_ok=True)
+        cv2.imwrite('/app/uploads/debug_frame.jpg', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+    except Exception as e:
+        logger.warning(f"Debug frame save failed: {e}")
+
 # Global variables (lazy loading)
 encodings = None
 attendance_log = None
@@ -216,6 +229,7 @@ def enroll():
         
         # Load and process image
         image = face_recognition.load_image_file(file)
+        save_debug_frame(image)
         logger.info(f"🖼️ Image loaded: {image.shape}")
         
         # Find face encodings
@@ -264,6 +278,7 @@ def recognize_and_mark():
         
         # Load image
         image = face_recognition.load_image_file(file)
+        save_debug_frame(image)
         logger.info(f"🧠 Image loaded: {image.shape}")
         
         # Find all faces in image using configured model
@@ -297,7 +312,80 @@ def recognize_and_mark():
                 "faces_detected": len(face_encodings),
                 "matches": []
             })
-        
+
+        logger.info(f"👥 Comparing against {len(known_ids)} enrolled students: {known_ids}")
+
+        known_encodings = [np.array(current_encodings[k]) for k in known_ids]
+
+        matches = []
+        attendance_marked = []
+
+        for i, face_encoding in enumerate(face_encodings):
+            face_location = face_locations[i]
+            if len(face_location) == 4:
+                top, right, bottom, left = face_location
+                x, y, w, h = left, top, right - left, bottom - top
+            else:
+                x, y, w, h = 20 + (i * 25), 20, 20, 25
+
+            face_matches = []
+            for j, known_encoding in enumerate(known_encodings):
+                face_distances = face_recognition.face_distance([known_encoding], face_encoding)
+                best_match_distance = np.min(face_distances)
+                confidence = 1 - best_match_distance
+                logger.info(f"🔢 Confidence: {confidence:.4f} (distance: {best_match_distance:.4f}) for {known_ids[j]}")
+
+                if confidence > 0.45:
+                    face_matches.append({
+                        "student_id": known_ids[j],
+                        "confidence": float(confidence),
+                        "distance": float(best_match_distance)
+                    })
+
+            if face_matches:
+                best_match = max(face_matches, key=lambda m: m['confidence'])
+                student_id = best_match["student_id"]
+                matches.append({
+                    "student_id": student_id,
+                    "face_index": i,
+                    "x": int(x), "y": int(y), "width": int(w), "height": int(h),
+                    "confidence": round(best_match["confidence"], 2),
+                    "recognized": True
+                })
+                logger.info(f"✅ Face {i+1} matched: {student_id} (confidence: {best_match['confidence']:.3f})")
+
+                try:
+                    success, message = mark_attendance_in_moodle(student_id)
+                    attendance_marked.append({
+                        "student_id": student_id,
+                        "marked": success,
+                        "message": message
+                    })
+                except Exception as mark_err:
+                    logger.warning(f"⚠️ Moodle attendance marking skipped for {student_id}: {mark_err}")
+                    attendance_marked.append({
+                        "student_id": student_id,
+                        "marked": False,
+                        "message": str(mark_err)
+                    })
+            else:
+                matches.append({
+                    "face_index": i,
+                    "x": int(x), "y": int(y), "width": int(w), "height": int(h),
+                    "recognized": False,
+                    "confidence": 0
+                })
+                logger.info(f"❌ Face {i+1} not recognized")
+
+        logger.info(f"📊 Total faces detected: {len(face_encodings)} | matches: {len([m for m in matches if m['recognized']])}")
+
+        return jsonify({
+            "success": True,
+            "faces_detected": len(face_encodings),
+            "matches": matches,
+            "attendance_marked": attendance_marked
+        })
+
     except Exception as e:
         logger.error(f"❌ Recognition and marking error: {str(e)}")
         import traceback
@@ -325,6 +413,7 @@ def recognize():
         # Load image
         try:
             image = face_recognition.load_image_file(file)
+            save_debug_frame(image)
             logger.info(f"🖼️ Image loaded successfully: {image.shape}")
         except Exception as e:
             logger.error(f"❌ Failed to load image: {e}")
@@ -394,8 +483,9 @@ def recognize():
                 face_distances = face_recognition.face_distance([known_encoding], face_encoding)
                 best_match_distance = np.min(face_distances)
                 confidence = 1 - best_match_distance
+                logger.info(f"🔢 Confidence: {confidence:.4f} (distance: {best_match_distance:.4f}) for {known_ids[j]}")
                 
-                if confidence > 0.6:  # Recognition threshold
+                if confidence > 0.45:  # Recognition threshold
                     face_matches.append({
                         "student_id": known_ids[j],
                         "confidence": float(confidence),

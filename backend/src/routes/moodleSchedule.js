@@ -126,12 +126,22 @@ router.get('/', async (req, res) => {
       });
     } catch (error) {
       console.error('Moodle schedule fetch error:', error);
-      
+
+      // Moodle attendance plugin not installed or Moodle DB unreachable:
+      // degrade gracefully so the Timetable page can fall back to local schedules
+      if (['ER_NO_SUCH_TABLE', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT'].includes(error.code)) {
+        return res.json({
+          success: true,
+          data: [],
+          note: 'Moodle attendance data unavailable - using local schedules only'
+        });
+      }
+
       // Never crash - always return safe response
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         error: 'Failed to fetch schedule',
-        data: [] 
+        data: []
       });
     } finally {
       if (connection) {

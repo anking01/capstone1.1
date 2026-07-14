@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS attendance_records (
   session_id INT REFERENCES attendance_sessions(id) ON DELETE CASCADE,
   student_id INT REFERENCES students(id) ON DELETE CASCADE,
   present BOOLEAN DEFAULT true,
-  method TEXT CHECK (method IN ('qr', 'face', 'manual')),
+  method TEXT CHECK (method IN ('qr', 'face', 'manual', 'auto_absent')),
   confidence FLOAT DEFAULT 1.0,
   timestamp TIMESTAMP DEFAULT now(),
   UNIQUE(session_id, student_id)
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS attendance (
   session_date DATE NOT NULL,
   session_id INT REFERENCES class_schedules(id) ON DELETE SET NULL,
   present BOOLEAN DEFAULT true,
-  method TEXT CHECK (method IN ('qr', 'face', 'manual')),
+  method TEXT CHECK (method IN ('qr', 'face', 'manual', 'auto_absent')),
   confidence FLOAT DEFAULT 1.0,
   recorded_at TIMESTAMP DEFAULT now(),
   UNIQUE(class_id, student_id, session_date)

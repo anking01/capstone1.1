@@ -208,11 +208,10 @@ async function generateAttendanceSummary(classId, sessionDate, sessionId) {
           COUNT(CASE WHEN present = true THEN 1 END) as present_count,
           COUNT(CASE WHEN present = false THEN 1 END) as absent_count,
           ROUND(
-            (COUNT(CASE WHEN present = true THEN 1 END)::float / COUNT(*)) * 100, 2
+            (COUNT(CASE WHEN present = true THEN 1 END)::numeric / COUNT(*)) * 100, 2
           ) as attendance_percentage
         FROM attendance a
-        JOIN enrollments e ON a.student_id = e.student_id
-        WHERE e.class_id = $1 AND a.session_id = $2
+        WHERE a.class_id = $1 AND a.session_id = $2
       `;
       params = [classId, sessionId];
     } else {
@@ -222,11 +221,10 @@ async function generateAttendanceSummary(classId, sessionDate, sessionId) {
           COUNT(CASE WHEN present = true THEN 1 END) as present_count,
           COUNT(CASE WHEN present = false THEN 1 END) as absent_count,
           ROUND(
-            (COUNT(CASE WHEN present = true THEN 1 END)::float / COUNT(*)) * 100, 2
+            (COUNT(CASE WHEN present = true THEN 1 END)::numeric / COUNT(*)) * 100, 2
           ) as attendance_percentage
         FROM attendance a
-        JOIN enrollments e ON a.student_id = e.student_id
-        WHERE e.class_id = $1 AND a.session_date = $2 AND a.session_id IS NULL
+        WHERE a.class_id = $1 AND a.session_date = $2 AND a.session_id IS NULL
       `;
       params = [classId, sessionDate];
     }

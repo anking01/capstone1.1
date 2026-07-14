@@ -77,35 +77,33 @@ router.post('/record', async (req, res) => {
 
     console.log('📥 Received:', { class_id, student_id, session_date, session_id });
 
-    // Normalize and validate student_id (support both STU001 and numeric formats)
-    let normalizedStudentId = student_id;
-    
-    // Normalize numeric-only IDs to STU format if needed
-    if (typeof student_id === 'string' && !student_id.startsWith("STU") && /^\d+$/.test(student_id)) {
-      normalizedStudentId = "STU" + student_id;
-    }
-    
-    // Convert string student_id to numeric database ID
-    let numericStudentId;
-    
-    if (typeof normalizedStudentId === 'string' && isNaN(normalizedStudentId)) {
-      const lookup = await db.query('SELECT id FROM students WHERE student_id = $1', [normalizedStudentId]);
-      
-      if (lookup.rows.length === 0) {
-        return res.status(404).json({ error: `Student ${normalizedStudentId} not found` });
-      }
-      
+    // Resolve student to numeric database ID.
+    // Accepts: roll/registration number ("12218198", "STU001") or the numeric DB id.
+    let numericStudentId = null;
+    const studentIdStr = String(student_id).trim();
+
+    // 1) Exact match on students.student_id (covers roll numbers and STU codes)
+    let lookup = await db.query('SELECT id FROM students WHERE student_id = $1', [studentIdStr]);
+    if (lookup.rows.length > 0) {
       numericStudentId = lookup.rows[0].id;
-      console.log(`? ${normalizedStudentId} ? ID: ${numericStudentId}`);
-    } else {
-      numericStudentId = parseInt(normalizedStudentId);
-      if (Number.isNaN(numericStudentId)) {
-        return res.status(400).json({ 
-          error: `Invalid student ID format: ${student_id}`,
-          expected: "STU001 or numeric registration number"
-        });
+    } else if (/^\d+$/.test(studentIdStr)) {
+      // 2) Numeric: treat as database ID
+      lookup = await db.query('SELECT id FROM students WHERE id = $1', [parseInt(studentIdStr, 10)]);
+      if (lookup.rows.length > 0) {
+        numericStudentId = lookup.rows[0].id;
+      } else {
+        // 3) Legacy fallback: STU-prefixed code
+        lookup = await db.query('SELECT id FROM students WHERE student_id = $1', ['STU' + studentIdStr]);
+        if (lookup.rows.length > 0) {
+          numericStudentId = lookup.rows[0].id;
+        }
       }
     }
+
+    if (numericStudentId === null) {
+      return res.status(404).json({ error: `Student ${studentIdStr} not found` });
+    }
+    console.log(`🎯 Resolved student ${studentIdStr} → ID: ${numericStudentId}`);
 
     // Check enrollment
     const enrolled = await db.query(
@@ -124,7 +122,14 @@ router.post('/record', async (req, res) => {
     // This fixes cross-session bleed on same calendar date.
     let result;
     const targetDate = session_date || new Date().toISOString().slice(0, 10);
-    const attendanceMethod = method || 'face_recognition';
+    // Normalize method to values allowed by the attendance_method_check constraint
+    const METHOD_MAP = {
+      face: 'face', face_recognition: 'face', facial_recognition: 'face',
+      qr: 'qr', qr_code: 'qr',
+      manual: 'manual',
+      auto: 'auto_absent', auto_absent: 'auto_absent'
+    };
+    const attendanceMethod = METHOD_MAP[String(method || 'face').toLowerCase()] || 'manual';
     const attendanceConfidence = confidence || 1.0;
     const isPresent = present !== undefined ? present : true; // Default to true if not specified
     
@@ -194,7 +199,7 @@ router.post('/record', async (req, res) => {
                       confidence = GREATEST(attendance.confidence, EXCLUDED.confidence),
                       recorded_at = now()
         RETURNING *;
-      `, [class_id, numericStudentId, targetDate, isPresent, attendanceMethod, attendanceConfidence, null]);
+      `, [class_id, numericStudentId, targetDate, isPresent, attendanceMethod, attendanceConfidence]);
     }
 
     console.log(`✅ Marked: ${student_id} (ID: ${numericStudentId}) as ${isPresent ? 'PRESENT' : 'ABSENT'}`);
@@ -397,7 +402,7 @@ router.get('/class/:classId/stats', async (req, res) => {
         CASE 
           WHEN COUNT(DISTINCT a.session_date) = 0 THEN 0
           ELSE ROUND(
-            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::float / 
+            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::numeric / 
              COUNT(DISTINCT a.session_date)) * 100, 2
           )
         END AS attendance_percentage
@@ -437,7 +442,7 @@ router.get('/class/:classId/stats/above75', async (req, res) => {
         CASE 
           WHEN (SELECT COUNT(DISTINCT session_date) FROM attendance WHERE class_id = $1) = 0 THEN 0
           ELSE ROUND(
-            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::float /
+            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::numeric /
               (SELECT COUNT(DISTINCT session_date) FROM attendance WHERE class_id = $1)) * 100, 2
           )
         END AS attendance_percentage
@@ -450,7 +455,7 @@ router.get('/class/:classId/stats/above75', async (req, res) => {
         (CASE 
           WHEN COUNT(DISTINCT a.session_date) = 0 THEN 0
           ELSE ROUND(
-            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::float /
+            (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END)::numeric /
               COUNT(DISTINCT a.session_date)) * 100, 2
           )
         END) >= 75

@@ -65,6 +65,45 @@ router.post('/login', async (req, res) => {
     }
     
     console.log(` Login attempt - Username: ${username}`);
+
+    // ---- LOCAL DEV AUTH BYPASS (Postgres-based, skips Moodle) ----
+    if (process.env.LOCAL_DEV_AUTH === 'true') {
+      try {
+        const localResult = await db.query(
+          'SELECT id, username, password_hash, role FROM users WHERE username = $1',
+          [username]
+        );
+        if (localResult.rows.length > 0) {
+          const localUser = localResult.rows[0];
+          const localValid = await bcrypt.compare(password, localUser.password_hash);
+          if (localValid) {
+            const token = jwt.sign(
+              {
+                id: localUser.id,
+                username: localUser.username,
+                email: `${localUser.username}@local.dev`,
+                name: localUser.username,
+                role: localUser.role,
+                course_id: 1,
+                course_name: 'Local Dev Course'
+              },
+              process.env.JWT_SECRET || 'default_secret_change_this',
+              { expiresIn: '24h' }
+            );
+            console.log(`[LOCAL DEV AUTH] Logged in via Postgres: ${username} (${localUser.role})`);
+            return res.json({
+              success: true,
+              token,
+              user: { id: localUser.id, username: localUser.username, role: localUser.role }
+            });
+          }
+        }
+        console.log('[LOCAL DEV AUTH] No Postgres match, falling back to Moodle auth flow');
+      } catch (localErr) {
+        console.error('[LOCAL DEV AUTH] error, falling back to Moodle:', localErr.message);
+      }
+    }
+    // ---- END LOCAL DEV AUTH BYPASS ----
     
     // Test database connection
     try {

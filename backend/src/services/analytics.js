@@ -12,8 +12,8 @@ class AnalyticsService {
           ROUND(
             (COUNT(DISTINCT CASE WHEN a.present = true THEN a.student_id END) * 100.0 / COUNT(DISTINCT a.student_id)), 2
           ) as attendance_percentage
-        FROM attendance 
-        WHERE class_id = $1 
+        FROM attendance a
+        WHERE class_id = $1
           AND session_date >= NOW() - INTERVAL '${days} days'
         GROUP BY session_date 
         ORDER BY session_date ASC
@@ -44,7 +44,7 @@ class AnalyticsService {
         JOIN attendance a ON s.id = a.student_id
         WHERE a.session_date >= NOW() - INTERVAL '30 days'
         GROUP BY s.id, s.student_id, s.name, s.email
-        HAVING attendance_percentage < $1
+        HAVING (COUNT(DISTINCT CASE WHEN a.present = true THEN a.session_date END) * 100.0 / COUNT(DISTINCT a.session_date)) < $1
         ORDER BY attendance_percentage ASC
       `;
       
@@ -140,8 +140,8 @@ class AnalyticsService {
           ROUND(
             (COUNT(DISTINCT CASE WHEN a.present = true THEN a.student_id END) * 100.0 / COUNT(DISTINCT a.student_id)), 2
           ) as attendance_percentage
-        FROM attendance 
-        WHERE class_id = $1 
+        FROM attendance a
+        WHERE class_id = $1
           AND session_date >= NOW() - INTERVAL '12 weeks'
         GROUP BY session_date, day_of_week 
         ORDER BY session_date DESC

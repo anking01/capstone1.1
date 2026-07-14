@@ -64,6 +64,7 @@ services:
       - ENCODINGS_FOLDER=/app/encodings
       # Prefer CPU-friendly model for webcam frames (fixes "No face detected" on CPU-only hosts)
       - FACE_DETECTION_MODEL=hog
+      - FACE_UPSAMPLE_TIMES=2
       - TZ=Asia/Kolkata
     volumes:
       - ./uploads:/app/uploads
@@ -137,6 +138,7 @@ services:
       - UPLOAD_FOLDER=/app/uploads
       - ENCODINGS_FOLDER=/app/encodings
       - FACE_DETECTION_MODEL=hog
+      - FACE_UPSAMPLE_TIMES=2
       - TZ=Asia/Kolkata
     volumes:
       - ./uploads:/app/uploads

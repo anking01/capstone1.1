@@ -56,7 +56,15 @@ router.get('/', async (req, res) => {
 // Get single student
 router.get('/:id', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM students WHERE id = $1', [req.params.id]);
+    const result = await db.query(`
+      SELECT *,
+             CASE
+               WHEN photo_url IS NOT NULL AND photo_url != '' THEN
+                 CASE WHEN photo_url LIKE 'http%' OR photo_url LIKE '/%' THEN photo_url ELSE '/uploads/' || photo_url END
+               ELSE NULL
+             END as photo_url
+      FROM students WHERE id = $1
+    `, [req.params.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
