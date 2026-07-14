@@ -230,7 +230,9 @@ services:
       - MOODLE_DB_PASSWORD=moodle_secret
       - MOODLE_DB_NAME=moodle
       - MOODLE_DB_PORT=3306
-      - MOODLE_WWWROOT=https://attendance-ml.duckdns.org/moodle
+      # Local development URL; switch back to the public URL when deploying
+      # - MOODLE_WWWROOT=https://attendance-ml.duckdns.org/moodle
+      - MOODLE_WWWROOT=http://localhost:8081
       - MOODLE_SSLPROXY=false
     networks:
       - app_network
